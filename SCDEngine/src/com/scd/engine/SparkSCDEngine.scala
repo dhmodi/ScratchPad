@@ -35,6 +35,13 @@ object SparkSCDEngine {
 					val conf = new SparkConf().setAppName("SparkSCDEngine").setMaster(args(0));
 					val sc = new SparkContext(conf);
 
+					val md5Value = sc.getConf.get("spark.scdengine.md5ValueColumn");
+					val batchId = sc.getConf.get("spark.scdengine.batchIdColumn");
+					val currInd = sc.getConf.get("spark.scdengine.currentIndicatorColumn");
+          val startDate = sc.getConf.get("spark.scdengine.startDateColumn");
+          val endDate = sc.getConf.get("spark.scdengine.endDateColumn");
+          val updateDate = sc.getConf.get("spark.scdengine.updateDateColumn");
+          
 					val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc);
 					import sqlContext.implicits._
 					val src=sqlContext.sql(s"select * from $srcDatabase.$srcTable");
@@ -52,22 +59,25 @@ object SparkSCDEngine {
 					case "Type2" => {
 
 						// SCD Type 2 
-						val md5DF = src.map(r => (r.getAs(s"${tblPrimaryKey}").toString, r.hashCode.toString)).toDF(s"${tblPrimaryKey}","md5Value")
+						val md5DF = src.map(r => (r.getAs(s"${tblPrimaryKey}").toString, r.hashCode.toString)).toDF(s"${tblPrimaryKey}",s"$md5Value")
 						md5DF.show();
 						val newSrc = src.join(md5DF,s"${tblPrimaryKey}");
 						newSrc.show();
-						var tgtFinal=tgt.filter("currind = 'N'"); //Add to final table
-						val tgtActive=tgt.filter("currind = 'Y'");
+						var tgtFinal=tgt.filter(s"$currInd" + " = 'N'"); //Add to final table
+						tgtFinal.show()
+						val tgtActive=tgt.filter(s"$currInd" + " = 'Y'");
 						// Check for duplicate in SRC & TGT
-						val devSrc = newSrc.except(tgtActive.as('a).join(newSrc.as('b),tgtActive.col("md5Value") === newSrc.col("md5Value")).select("b.*").dropDuplicates());
+						val devSrc = newSrc.except(tgtActive.as('a).join(newSrc.as('b),tgtActive.col(s"$md5Value") === newSrc.col(s"$md5Value")).select("b.*").dropDuplicates());
+						devSrc.show()
 						val newTgt2 = tgtActive.as('a).join(devSrc.as('b),tgtActive.col(s"${tblPrimaryKey}") === devSrc.col(s"${tblPrimaryKey}"));
+						newTgt2.show()
 						tgtFinal = tgtFinal.unionAll(tgtActive.except(newTgt2.select("a.*")));
 						val inBatchID = udf((t:String) => "13" );
 						val inCurrInd = udf((t:String) => "Y" );
 						val NCurrInd = udf((t:String) => "N" );
-						val endDate = udf((t:String) => "9999-12-31 23:59:59");
-						tgtFinal = tgtFinal.unionAll(newTgt2.select("a.*").withColumn("currInd", NCurrInd(col(s"${tblPrimaryKey}"))).withColumn("endDate", current_timestamp()).withColumn("updateDate", current_timestamp()));
-						val srcInsert = devSrc.withColumn("batchId", inBatchID(col(s"${tblPrimaryKey}"))).withColumn("currInd", inCurrInd(col(s"${tblPrimaryKey}"))).withColumn("startDate", current_timestamp()).withColumn("endDate", date_format(endDate(col(s"${tblPrimaryKey}")),"yyyy-MM-dd HH:mm:ss")).withColumn("updateDate", current_timestamp());
+						val fendDate = udf((t:String) => "9999-12-31 23:59:59");
+						tgtFinal = tgtFinal.unionAll(newTgt2.select("a.*").withColumn(s"$currInd", NCurrInd(col(s"${tblPrimaryKey}"))).withColumn(s"$endDate", current_timestamp()).withColumn(s"$updateDate", current_timestamp()));
+						val srcInsert = devSrc.withColumn(s"$batchId", inBatchID(col(s"${tblPrimaryKey}"))).withColumn(s"$currInd", inCurrInd(col(s"${tblPrimaryKey}"))).withColumn(s"$startDate", current_timestamp()).withColumn(s"$endDate", date_format(fendDate(col(s"${tblPrimaryKey}")),"yyyy-MM-dd HH:mm:ss")).withColumn(s"$updateDate", current_timestamp());
 						tgtFinal = tgtFinal.unionAll(srcInsert);
 						// tgtFinal.write.mode(SaveMode.Append).saveAsTable(s"$tgtDatabase.tgt_table2");
 						tgtFinal.registerTempTable(s"$tgtTable"+"_tmp")
