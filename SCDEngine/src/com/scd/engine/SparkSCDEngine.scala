@@ -38,14 +38,45 @@ object SparkSCDEngine {
 					val md5Value = sc.getConf.get("spark.scdengine.md5ValueColumn");
 					val batchId = sc.getConf.get("spark.scdengine.batchIdColumn");
 					val currInd = sc.getConf.get("spark.scdengine.currentIndicatorColumn");
-          val startDate = sc.getConf.get("spark.scdengine.startDateColumn");
-          val endDate = sc.getConf.get("spark.scdengine.endDateColumn");
-          val updateDate = sc.getConf.get("spark.scdengine.updateDateColumn");
-          
+					val startDate = sc.getConf.get("spark.scdengine.startDateColumn");
+					val endDate = sc.getConf.get("spark.scdengine.endDateColumn");
+					val updateDate = sc.getConf.get("spark.scdengine.updateDateColumn");
+
 					val sqlContext = new org.apache.spark.sql.hive.HiveContext(sc);
 					import sqlContext.implicits._
-					val src=sqlContext.sql(s"select * from $srcDatabase.$srcTable");
+					var src=sqlContext.sql(s"select * from $srcDatabase.$srcTable");
 					val tgt=sqlContext.sql(s"select * from $tgtDatabase.$tgtTable");
+					val srcDataTypes = src.dtypes
+							val tgtDataTypes = tgt.drop("md5Value").drop("batchId").drop("currInd").drop("startDate").drop("endDate").drop("updateDate").dtypes
+
+							val toInt    = udf[Int, String]( _.toInt);
+					val toDouble = udf[Double, String]( _.toDouble);
+					val conToString = udf[String, Any]( _.toString);
+					val featureSRC = src.select();
+
+
+					if(srcDataTypes.deep  != tgtDataTypes.deep)
+					{
+						for ( x <- 0 to (tgtDataTypes.length - 1) ) {
+							if (srcDataTypes(x) != tgtDataTypes(x))
+							{
+								val cols = tgtDataTypes(x).toString().split(",").map(_.trim);
+								val columnName = cols(0).replaceAll("[()]","")
+										val dataType = cols(1).toString.split("\\(")(0).replaceAll("[)]","")
+		 val decPrecision = cols(1).toString.split("\\(")(1).replaceAll("[)]","")
+		val decScale = cols(2).replaceAll("[)]","");
+		var decFormat = "0";
+										 for ( i <- (1 to decPrecision.toInt() - 1){
+										   decFormat = decFormat + "0";
+										   										 }
+										dataType match {
+										case "IntegerType"  => { src = src.withColumn(s"$columnName", toInt(src(s"$columnName"))) };
+										case "StringType" => { src = src.withColumn(s"$columnName", conToString(src(s"$columnName")))};
+										
+								}
+							}
+						}
+					}
 
 					scdType match {
 					case "Type1" => {
@@ -60,7 +91,7 @@ object SparkSCDEngine {
 
 						// SCD Type 2 
 						val md5DF = src.map(r => (r.getAs(s"${tblPrimaryKey}").toString, r.hashCode.toString)).toDF(s"${tblPrimaryKey}",s"$md5Value")
-						md5DF.show();
+								md5DF.show();
 						val newSrc = src.join(md5DF,s"${tblPrimaryKey}");
 						newSrc.show();
 						var tgtFinal=tgt.filter(s"$currInd" + " = 'N'"); //Add to final table
